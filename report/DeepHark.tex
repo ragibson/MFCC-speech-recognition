@@ -1,0 +1,125 @@
+\documentclass[12pt]{article}
+
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{amsthm}
+\usepackage{blindtext}
+\usepackage{changepage}
+\usepackage{etoolbox}
+\usepackage{fancyhdr}
+\usepackage[margin=1.25in]{geometry}
+\usepackage{graphicx}
+\PassOptionsToPackage{hyphens}{url}\usepackage{hyperref}
+\usepackage{multirow}
+
+\usepackage[numbers, sort&compress]{natbib}
+\bibliographystyle{unsrt}
+\renewcommand*{\bibfont}{\raggedright}
+
+\title{DeepHark: Real-time Speech Recognition Via MFCC Neural Networks}
+\author{Ryan Gibson\\
+Department of Computer Science\\
+University of North Carolina at Chapel Hill\\
+Chapel Hill, NC 27599}
+\date{May 2019}
+
+\begin{document}
+\maketitle
+
+\section{Introduction and Problem Motivation}
+
+Over the past few years, voice interfaces have become increasingly popular as the number of common speech-based services has grown (e.g. Alexa, Google Assistant, Siri). Indeed, across household appliances, in-car speech recognition systems, and smartphones, the average individual comes into contact with multiple virtual assistants each day.
+
+However, despite this explosion of products that depend on robust speech recognition, it remains difficult to create even a simple speech detector. In fact, the precise details of Apple and Google's speech-to-text products are closely guarded trade secrets.
+
+Moreover, many available transcription services are expensive and rely on offloading computation to compute clusters. This is inconvenient and introduces unacceptable round-trip latency in applications involving strict real-time deadlines.
+
+In this paper, we present the DeepHark machine learning architecture which is both easy to train and can quickly recognize speech commands on low-end, commodity hardware.
+
+\section{Related Work}
+
+Machine learning has been widely applied in the field of automatic human speech recognition. In this section, we briefly review the more prominent approaches.
+
+Historically, virtually every machine learning strategy has been used in automatic speech recognition in some way, including early work with Hidden Markov Models and Bayesian Learning \cite{deng_machine_2013}. More recently, however, the focus of the research community has shifted to neural networks.
+
+Similarly, significant progress has been made with using Gaussian mixture models in speech recognition. Such models were competitive with the state-of-the-art until the recent advances in deep learning \cite{deng_new_2013}.
+
+In 2016, a team associated with the Chinese tech company Baidu presented a ``end-to-end deep learning method'' that achieved state-of-the-art performance in speech recognition without the need for feature engineering \cite{amodei_et_al_deep_2016}.
+
+\section{Methods}
+
+Here, we focus on the TensorFlow Speech Commands Dataset \cite{warden_speech_2017}. This dataset consists of 65,000 one-second sound clips of 30 short words.\footnote{All sound clips are in a ``16-bit little-endian PCM-encoded WAVE format at a 16000 Hz sample rate'' and trimmed to a one-second length if needed.} Importantly, these sound clips were originally obtained in a crowd-sourcing effort that ``didn't stipulate any quality requirements'' so as to capture the type of audio one would obtain in a typical consumer/robotics application.
+
+In order to make comparisons to competing methods, we follow the guidance of the Kaggle competition \cite{kaggle.com_tensorflow_nodate} based on this dataset and attempt to recognize the following 10 words in speech: ``yes'', ``no'', ``up'', ``down'', ``left'', ``right'', ``on'', ``off'', ``stop'', and ``go''. All other words are considered to be ``unknown''.
+
+Our architecture consists of two primary parts: computing a short-term power spectrum of the input sound and then using these as the input features to a neural network.
+
+The first half deals with computing a feature vector. We use the ``Mel-frequency cepstrum'' (MFC) representation for this purpose.\footnote{We use the Python implementation in the python\_speech\_features library and have adapted our explanation of MFC from their documentation \cite{james_lyons_python_speech_features:_nodate}.} In short, this is a representation that takes a short window of a sound clip and
+\begin{enumerate}
+	\item Separates the sound into its spectrum (i.e. a sequence of its frequency components and their associated strengths) via a Fourier transform.
+	\item Bins the frequency strengths, using overlapping windows on a log-scaled version of the Mel pitch scale to correct for human sound perception being logarithmic in both pitch \emph{and} loudness.
+	\item Computes the Discrete Cosine Transform of the binned frequency strengths (i.e. computing a ``spectrum-of-spectrums'') and uses the resulting coefficients as the final features. This decorrelates the strengths from the overlapping windows in step 2 and allows us to drop the high-frequency spectrum changes from our features, which has been shown to improve performance in speech recognition tasks.
+\end{enumerate}
+
+Using this, our feature engineering proceeds as follows for each sound clip.
+\begin{enumerate}
+	\item Pad the end of the sound with silence if presented with fewer than 16000 data samples
+	\item Compute the Mel-frequency cepstrum coefficients (MFCC) from the input sound with a window length of 10 ms and 50 coefficients per window.
+\end{enumerate}
+
+Once flattened, this gives us a feature vector of length 5000 that we present to our neural network. The architecture of this network is remarkably simple and only consists of four fully connected layers of size 5000, 50, 50, and 11, respectively. All layers used Leaky ReLU activation functions \cite{xu_empirical_2015}, 10\% dropout, and were initialized with Xavier uniform weights \cite{glorot_understanding_2010}.
+
+The network was trained with cross-entropy loss (corrected for the size of the training classes since the ``unknown'' class is significantly larger than the rest in this dataset) and the Adagrad optimization algorithm \cite{duchi_adaptive_2011} with early stopping.
+
+Our implementation using PyTorch \cite{paszke_automatic_2017} can be found at \url{https://github.com/deephark/DeepHark}.
+
+\section{Results}
+
+We implemented and tested our architecture on a machine with an i7 9700K CPU and GTX 1070 GPU. As suggested by the dataset creators \cite{warden_speech_2017}, we split the sound files into three sets: 80\% training, 10\% validation, and 10\% testing.
+
+After training for approximately 10 minutes, we obtained a classification accuracy of ${\sim}$81\% on the testing set and we show the normalized confusion matrix in \autoref{fig:results_table}.
+
+\begin{table}[h]
+	\centering
+	\resizebox{\textwidth}{!}{%
+	\begin{tabular}{cc|ccccccccccc|}
+		\cline{3-13}&&\multicolumn{11}{|c|}{Actual Label}\\
+		\cline{3-13}\multirow{12}{*}{Predicted Label}&&yes&no&up&down&left&right&on&off&stop&go&unknown\\
+		\hline\multicolumn{1}{|c|}{}&yes&82\%&&&&4\%&1\%&&&&&1\%\\
+		\multicolumn{1}{|c|}{}&no&&57\%&&6\%&1\%&&&&1\%&14\%&1\%\\
+		\multicolumn{1}{|c|}{}&up&1\%&2\%&67\%&&1\%&&1\%&4\%&4\%&4\%&1\%\\
+		\multicolumn{1}{|c|}{}&down&1\%&2\%&&58\%&&1\%&&&&2\%&2\%\\
+		\multicolumn{1}{|c|}{}&left&5\%&1\%&1\%&&64\%&2\%&&1\%&&2\%&1\%\\
+		\multicolumn{1}{|c|}{}&right&1\%&&&&2\%&69\%&&&&&2\%\\
+		\multicolumn{1}{|c|}{}&on&&&1\%&&&&69\%&2\%&&1\%&2\%\\
+		\multicolumn{1}{|c|}{}&off&1\%&1\%&1\%&&3\%&&1\%&77\%&&1\%&1\%\\
+		\multicolumn{1}{|c|}{}&stop&&&4\%&&1\%&&&&82\%&&1\%\\
+		\multicolumn{1}{|c|}{}&go&&12\%&3\%&4\%&1\%&2\%&2\%&1\%&1\%&53\%&2\%\\
+		\multicolumn{1}{|c|}{}&unknown&9\%&24\%&22\%&30\%&22\%&25\%&26\%&13\%&12\%&23\%&89\%\\\hline
+	\end{tabular}
+	}
+	\caption{Column-normalized confusion matrix of our performance on the test set (i.e. each column represents the per-class classification percentages of our model). Percentages that round to zero are omitted.}
+	\label{fig:results_table}
+\end{table}
+
+Notably, our model tends not to misclassify sound clips (with the exception of distinguishing between ``no'' and ``go''), but simply predicts ``unknown'' with problematic inputs. Moreover, our model's performance here is relatively close to state-of-the-art. Indeed, the best known classification accuracy on this dataset is just over 90\% \cite{kaggle.com_tensorflow_nodate} (recall that the audio was obtained via crowdsourcing with no quality requirements).
+
+% ~1-1.5 ms average for per-sample MFCC (15 us per 10 ms sound window)
+% ~1-2 us average for per-sample network inference time
+Importantly, the simplicity of our model gives us \emph{extremely quick} inference times. When running on the CPU, we found that the MFCC computation from \cite{james_lyons_python_speech_features:_nodate} takes ${\sim}$10--15 us per 10 ms window and the forward inference time of the network is ${\sim}$1--2 us, on average.
+
+For reference, the sound clips of interest here have 62.5 us between samples (since the sample rate is 16 KHz). Hence, we expect that this model would be feasible on very low-end embedded systems, especially if hardware support for the Fourier and Discrete Cosine transforms is available.
+
+\section{Conclusion and Future Work}
+
+In this paper, we have presented a machine learning architecture that achieves ``near state-of-the-art'' classification performance in speech command recognition tasks while being quick to train and having extremely short inference times.
+
+Future work should focus on extending this approach to situations in which the set of words is not known in advance.
+
+Future work could also analyze tweaking our architecture for increased performance, though we have found that DeepHark performs significantly better than small RNNs when the allotted training time is limited.
+
+Lastly, we believe that our method's speed lends itself towards integration into larger ensemble-learning strategies or fast feature engineering. As such, more work should focus on the applications of DeepHark as part of other machine learning frameworks.
+
+\clearpage
+\bibliography{references.bib}
+\end{document}
